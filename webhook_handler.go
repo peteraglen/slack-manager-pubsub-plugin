@@ -94,7 +94,7 @@ func (c *WebhookHandler) getPublisher(topic string) *pubsub.Publisher {
 		publisher.EnableMessageOrdering = c.isOrdered
 		publisher.PublishSettings.DelayThreshold = c.opts.publisherDelayThreshold
 		publisher.PublishSettings.CountThreshold = c.opts.publisherCountThreshold
-		publisher.PublishSettings.ByteThreshold = c.opts.publiserByteThreshold
+		publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
 
 		c.publishers[topic] = publisher
 	}

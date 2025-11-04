@@ -10,7 +10,7 @@ type Option func(*Options)
 type Options struct {
 	publisherDelayThreshold              time.Duration
 	publisherCountThreshold              int
-	publiserByteThreshold                int
+	publisherByteThreshold               int
 	subscriberMaxExtension               time.Duration
 	subscriberMaxDurationPerAckExtension time.Duration
 	subscriberMinDurationPerAckExtension time.Duration
@@ -23,7 +23,7 @@ func newOptions() *Options {
 	return &Options{
 		publisherDelayThreshold:              10 * time.Millisecond,
 		publisherCountThreshold:              100,
-		publiserByteThreshold:                1e6, // 1 MB
+		publisherByteThreshold:               1e6, // 1 MB
 		subscriberMaxExtension:               10 * time.Minute,
 		subscriberMaxDurationPerAckExtension: time.Minute,
 		subscriberMinDurationPerAckExtension: 10 * time.Second,
@@ -42,8 +42,32 @@ func (o *Options) validate() error {
 		return errors.New("count threshold must be greater than zero")
 	}
 
-	if o.publiserByteThreshold <= 0 {
+	if o.publisherByteThreshold <= 0 {
 		return errors.New("byte threshold must be greater than zero")
+	}
+
+	if o.subscriberMaxExtension < time.Minute || o.subscriberMaxExtension > time.Hour {
+		return errors.New("subscriber max extension must be between 1 minute and 1 hour")
+	}
+
+	if o.subscriberMaxDurationPerAckExtension < 10*time.Second || o.subscriberMaxDurationPerAckExtension > 600*time.Second {
+		return errors.New("subscriber max duration per ack extension must be between 10 seconds and 10 minutes")
+	}
+
+	if o.subscriberMinDurationPerAckExtension < 10*time.Second || o.subscriberMinDurationPerAckExtension > 600*time.Second {
+		return errors.New("subscriber min duration per ack extension must be between 10 seconds and 10 minutes")
+	}
+
+	if o.subscriberMinDurationPerAckExtension >= o.subscriberMaxDurationPerAckExtension {
+		return errors.New("subscriber min duration per ack extension must be less than max duration per ack extension")
+	}
+
+	if o.subscriberMaxOutstandingMessages < 1 {
+		return errors.New("subscriber max outstanding messages must be greater than or equal to 1")
+	}
+
+	if o.subscriberMaxOutstandingBytes < 1e4 {
+		return errors.New("subscriber max outstanding bytes must be greater than or equal to 10 KB")
 	}
 
 	return nil
@@ -63,7 +87,7 @@ func WithPublisherCountThreshold(n int) Option {
 
 func WithPublisherByteThreshold(n int) Option {
 	return func(o *Options) {
-		o.publiserByteThreshold = n
+		o.publisherByteThreshold = n
 	}
 }
 

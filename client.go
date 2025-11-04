@@ -59,7 +59,7 @@ func (c *Client) Init(_ context.Context) (*Client, error) {
 	c.publisher.EnableMessageOrdering = true
 	c.publisher.PublishSettings.DelayThreshold = c.opts.publisherDelayThreshold
 	c.publisher.PublishSettings.CountThreshold = c.opts.publisherCountThreshold
-	c.publisher.PublishSettings.ByteThreshold = c.opts.publiserByteThreshold
+	c.publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
 
 	c.subscriber = c.client.Subscriber(c.subscription)
 
@@ -141,7 +141,7 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 		}
 
 		if err := trySend(ctx, item, sinkCh); err != nil {
-			if !errors.Is(err, context.Canceled) {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				c.logger.Errorf("Failed to send pub/sub message %s to sink channel: %v", msg.ID, err)
 			}
 		}
