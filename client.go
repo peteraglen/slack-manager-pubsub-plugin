@@ -11,14 +11,16 @@ import (
 )
 
 type Client struct {
-	client       *pubsub.Client
-	publisher    *pubsub.Publisher
-	subscriber   *pubsub.Subscriber
-	topic        string
-	subscription string
-	opts         *Options
-	logger       common.Logger
-	initialized  bool
+	client        *pubsub.Client
+	publisher     *pubsub.Publisher
+	subscriber    *pubsub.Subscriber
+	topic         string
+	subscription  string
+	opts          *Options
+	logger        common.Logger
+	initialized   bool
+	isReceiving   bool
+	receiveSinkCh chan<- *common.FifoQueueItem
 }
 
 func New(c *pubsub.Client, topic string, subscription string, logger common.Logger, opts ...Option) *Client {
@@ -120,38 +122,51 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 		return errors.New("pub/sub client not initialized")
 	}
 
+	if c.isReceiving {
+		return errors.New("pub/sub client is already receiving messages")
+	}
+
+	c.isReceiving = true
+	c.receiveSinkCh = sinkCh
+
 	defer close(sinkCh)
 
-	c.logger.Debug("Reading pub/sub topic")
+	defer func() {
+		c.isReceiving = false
+		c.receiveSinkCh = nil
+		c.logger.Debug("Stopped receiving pub/sub messages")
+	}()
 
-	err := c.subscriber.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
-		ack := func(_ context.Context) {
-			msg.Ack()
+	c.logger.Debug("Started receiving pub/sub messages")
+
+	return c.subscriber.Receive(ctx, c.receiveHandler)
+}
+
+func (c *Client) receiveHandler(ctx context.Context, msg *pubsub.Message) {
+	ack := func(_ context.Context) {
+		msg.Ack()
+	}
+
+	nack := func(_ context.Context) {
+		msg.Nack()
+	}
+
+	item := &common.FifoQueueItem{
+		MessageID:        msg.ID,
+		SlackChannelID:   msg.OrderingKey,
+		ReceiveTimestamp: time.Now(),
+		Body:             string(msg.Data),
+		Ack:              ack,
+		Nack:             nack,
+	}
+
+	if err := trySend(ctx, item, c.receiveSinkCh); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			c.logger.Errorf("Failed to send pub/sub message %s to sink channel: %v", msg.ID, err)
 		}
+	}
 
-		nack := func(_ context.Context) {
-			msg.Nack()
-		}
-
-		item := &common.FifoQueueItem{
-			MessageID:        msg.ID,
-			SlackChannelID:   msg.OrderingKey,
-			ReceiveTimestamp: time.Now(),
-			Body:             string(msg.Data),
-			Ack:              ack,
-			Nack:             nack,
-		}
-
-		if err := trySend(ctx, item, sinkCh); err != nil {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				c.logger.Errorf("Failed to send pub/sub message %s to sink channel: %v", msg.ID, err)
-			}
-		}
-
-		c.logger.WithField("message_id", msg.ID).Debug("Pub/Sub message received")
-	})
-
-	return err
+	c.logger.WithField("message_id", msg.ID).Debug("Pub/Sub message received")
 }
 
 func trySend(ctx context.Context, msg *common.FifoQueueItem, sinkCh chan<- *common.FifoQueueItem) error {
