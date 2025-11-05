@@ -17,16 +17,18 @@ type Client struct {
 	topic        string
 	subscription string
 	opts         *Options
-	logger       Logger
+	logger       common.Logger
 	initialized  bool
 }
 
-func New(c *pubsub.Client, topic string, subscription string, logger Logger, opts ...Option) *Client {
+func New(c *pubsub.Client, topic string, subscription string, logger common.Logger, opts ...Option) *Client {
 	options := newOptions()
 
 	for _, o := range opts {
 		o(options)
 	}
+
+	logger = logger.WithField("plugin", "pubsub").WithField("topic", topic).WithField("subscription", subscription)
 
 	return &Client{
 		client:       c,
@@ -120,7 +122,7 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 
 	defer close(sinkCh)
 
-	c.logger.Debugf("Started reading pub/sub topic %s", c.topic)
+	c.logger.Debug("Reading pub/sub topic")
 
 	err := c.subscriber.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
 		ack := func(_ context.Context) {
@@ -145,6 +147,8 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 				c.logger.Errorf("Failed to send pub/sub message %s to sink channel: %v", msg.ID, err)
 			}
 		}
+
+		c.logger.WithField("message_id", msg.ID).Debug("Pub/Sub message received")
 	})
 
 	return err
