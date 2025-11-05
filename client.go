@@ -118,6 +118,8 @@ func (c *Client) Name() string {
 }
 
 func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueItem) error {
+	defer close(sinkCh)
+
 	if !c.initialized {
 		return errors.New("pub/sub client not initialized")
 	}
@@ -128,8 +130,6 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 
 	c.isReceiving = true
 	c.receiveSinkCh = sinkCh
-
-	defer close(sinkCh)
 
 	defer func() {
 		c.isReceiving = false
