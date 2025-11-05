@@ -41,7 +41,7 @@ func New(c *pubsub.Client, topic string, subscription string, logger common.Logg
 	}
 }
 
-func (c *Client) Init(_ context.Context) (*Client, error) {
+func (c *Client) Init() (*Client, error) {
 	if c.initialized {
 		return c, nil
 	}
