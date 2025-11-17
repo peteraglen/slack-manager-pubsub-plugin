@@ -30,7 +30,11 @@ func New(c *pubsub.Client, topic string, subscription string, logger common.Logg
 		o(options)
 	}
 
-	logger = logger.WithField("plugin", "pubsub").WithField("topic", topic).WithField("subscription", subscription)
+	logger = logger.WithField("plugin", "pubsub").WithField("topic", topic)
+
+	if subscription != "" {
+		logger = logger.WithField("subscription", subscription)
+	}
 
 	return &Client{
 		client:       c,
@@ -50,10 +54,6 @@ func (c *Client) Init() (*Client, error) {
 		return nil, errors.New("pub/sub topic cannot be empty")
 	}
 
-	if c.subscription == "" {
-		return nil, errors.New("pub/sub subscription cannot be empty")
-	}
-
 	if err := c.opts.validate(); err != nil {
 		return nil, fmt.Errorf("invalid pub/sub client options: %w", err)
 	}
@@ -65,17 +65,19 @@ func (c *Client) Init() (*Client, error) {
 	c.publisher.PublishSettings.CountThreshold = c.opts.publisherCountThreshold
 	c.publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
 
-	c.subscriber = c.client.Subscriber(c.subscription)
+	if c.subscription != "" {
+		c.subscriber = c.client.Subscriber(c.subscription)
 
-	c.subscriber.ReceiveSettings.MaxExtension = c.opts.subscriberMaxExtension
-	c.subscriber.ReceiveSettings.MaxDurationPerAckExtension = c.opts.subscriberMaxDurationPerAckExtension
-	c.subscriber.ReceiveSettings.MinDurationPerAckExtension = c.opts.subscriberMinDurationPerAckExtension
-	c.subscriber.ReceiveSettings.MaxOutstandingMessages = c.opts.subscriberMaxOutstandingMessages
-	c.subscriber.ReceiveSettings.MaxOutstandingBytes = c.opts.subscriberMaxOutstandingBytes
+		c.subscriber.ReceiveSettings.MaxExtension = c.opts.subscriberMaxExtension
+		c.subscriber.ReceiveSettings.MaxDurationPerAckExtension = c.opts.subscriberMaxDurationPerAckExtension
+		c.subscriber.ReceiveSettings.MinDurationPerAckExtension = c.opts.subscriberMinDurationPerAckExtension
+		c.subscriber.ReceiveSettings.MaxOutstandingMessages = c.opts.subscriberMaxOutstandingMessages
+		c.subscriber.ReceiveSettings.MaxOutstandingBytes = c.opts.subscriberMaxOutstandingBytes
 
-	c.subscriber.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{
-		Behavior: pubsub.ShutdownBehaviorNackImmediately,
-		Timeout:  c.opts.subscriberShutdownTimeout,
+		c.subscriber.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{
+			Behavior: pubsub.ShutdownBehaviorNackImmediately,
+			Timeout:  c.opts.subscriberShutdownTimeout,
+		}
 	}
 
 	c.initialized = true
@@ -122,6 +124,10 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 
 	if !c.initialized {
 		return errors.New("pub/sub client not initialized")
+	}
+
+	if c.subscriber == nil {
+		return errors.New("pub/sub client subscriber is not configured")
 	}
 
 	if c.isReceiving {
