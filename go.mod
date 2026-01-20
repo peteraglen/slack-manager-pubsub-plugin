@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	cloud.google.com/go/pubsub/v2 v2.3.0
-	github.com/peteraglen/slack-manager-common v0.1.0
+	github.com/peteraglen/slack-manager-common v0.1.3
 )
 
 require (

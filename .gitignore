@@ -48,3 +48,6 @@ debug*.txt
 # Profiling
 profiling/
 profile*.pdf
+
+# AI tools
+.claude/*.local.json

@@ -1,4 +1,4 @@
-package sqs
+package pubsub
 
 import (
 	"errors"
@@ -33,19 +33,23 @@ func newOptions() *Options {
 	}
 }
 
-func (o *Options) validate() error {
+func (o *Options) validatePublisher() error {
 	if o.publisherDelayThreshold < 0 {
-		return errors.New("delay threshold must be non-negative")
+		return errors.New("publisher delay threshold must be non-negative")
 	}
 
 	if o.publisherCountThreshold <= 0 {
-		return errors.New("count threshold must be greater than zero")
+		return errors.New("publisher count threshold must be greater than zero")
 	}
 
 	if o.publisherByteThreshold <= 0 {
-		return errors.New("byte threshold must be greater than zero")
+		return errors.New("publisher byte threshold must be greater than zero")
 	}
 
+	return nil
+}
+
+func (o *Options) validateSubscriber() error {
 	if o.subscriberMaxExtension < time.Minute || o.subscriberMaxExtension > time.Hour {
 		return errors.New("subscriber max extension must be between 1 minute and 1 hour")
 	}
@@ -68,6 +72,10 @@ func (o *Options) validate() error {
 
 	if o.subscriberMaxOutstandingBytes < 1e4 {
 		return errors.New("subscriber max outstanding bytes must be greater than or equal to 10 KB")
+	}
+
+	if o.subscriberShutdownTimeout <= 0 {
+		return errors.New("subscriber shutdown timeout must be greater than zero")
 	}
 
 	return nil

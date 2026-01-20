@@ -1,9 +1,10 @@
-package sqs
+package pubsub
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -18,12 +19,20 @@ type Client struct {
 	subscription  string
 	opts          *Options
 	logger        common.Logger
-	initialized   bool
-	isReceiving   bool
+	initialized   atomic.Bool
+	isReceiving   atomic.Bool
 	receiveSinkCh chan<- *common.FifoQueueItem
 }
 
-func New(c *pubsub.Client, topic string, subscription string, logger common.Logger, opts ...Option) *Client {
+func New(c *pubsub.Client, topic string, subscription string, logger common.Logger, opts ...Option) (*Client, error) {
+	if c == nil {
+		return nil, errors.New("pub/sub client cannot be nil")
+	}
+
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
+	}
+
 	options := newOptions()
 
 	for _, o := range opts {
@@ -42,11 +51,11 @@ func New(c *pubsub.Client, topic string, subscription string, logger common.Logg
 		subscription: subscription,
 		opts:         options,
 		logger:       logger,
-	}
+	}, nil
 }
 
 func (c *Client) Init() (*Client, error) {
-	if c.initialized {
+	if c.initialized.Load() {
 		return c, nil
 	}
 
@@ -54,8 +63,8 @@ func (c *Client) Init() (*Client, error) {
 		return nil, errors.New("pub/sub topic cannot be empty")
 	}
 
-	if err := c.opts.validate(); err != nil {
-		return nil, fmt.Errorf("invalid pub/sub client options: %w", err)
+	if err := c.opts.validatePublisher(); err != nil {
+		return nil, fmt.Errorf("invalid pub/sub publisher options: %w", err)
 	}
 
 	c.publisher = c.client.Publisher(c.topic)
@@ -66,6 +75,10 @@ func (c *Client) Init() (*Client, error) {
 	c.publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
 
 	if c.subscription != "" {
+		if err := c.opts.validateSubscriber(); err != nil {
+			return nil, fmt.Errorf("invalid pub/sub subscriber options: %w", err)
+		}
+
 		c.subscriber = c.client.Subscriber(c.subscription)
 
 		c.subscriber.ReceiveSettings.MaxExtension = c.opts.subscriberMaxExtension
@@ -80,13 +93,24 @@ func (c *Client) Init() (*Client, error) {
 		}
 	}
 
-	c.initialized = true
+	c.initialized.Store(true)
 
 	return c, nil
 }
 
+func (c *Client) Name() string {
+	return c.topic
+}
+
+// Close stops the publisher, flushing any pending messages.
+func (c *Client) Close() {
+	if c.publisher != nil {
+		c.publisher.Stop()
+	}
+}
+
 func (c *Client) Send(ctx context.Context, groupID, dedupID, body string) error {
-	if !c.initialized {
+	if !c.initialized.Load() {
 		return errors.New("pub/sub client not initialized")
 	}
 
@@ -115,14 +139,12 @@ func (c *Client) Send(ctx context.Context, groupID, dedupID, body string) error 
 	return nil
 }
 
-func (c *Client) Name() string {
-	return c.topic
-}
-
+// Receive starts receiving messages from the configured subscription and sends them to the sink channel.
+// The sink channel is always closed when this method returns, including on validation errors.
 func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueItem) error {
 	defer close(sinkCh)
 
-	if !c.initialized {
+	if !c.initialized.Load() {
 		return errors.New("pub/sub client not initialized")
 	}
 
@@ -130,15 +152,15 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 		return errors.New("pub/sub client subscriber is not configured")
 	}
 
-	if c.isReceiving {
+	if c.isReceiving.Load() {
 		return errors.New("pub/sub client is already receiving messages")
 	}
 
-	c.isReceiving = true
+	c.isReceiving.Store(true)
 	c.receiveSinkCh = sinkCh
 
 	defer func() {
-		c.isReceiving = false
+		c.isReceiving.Store(false)
 		c.receiveSinkCh = nil
 		c.logger.Debug("Stopped receiving pub/sub messages")
 	}()
@@ -149,30 +171,26 @@ func (c *Client) Receive(ctx context.Context, sinkCh chan<- *common.FifoQueueIte
 }
 
 func (c *Client) receiveHandler(ctx context.Context, msg *pubsub.Message) {
-	ack := func(_ context.Context) {
-		msg.Ack()
-	}
-
-	nack := func(_ context.Context) {
-		msg.Nack()
-	}
-
 	item := &common.FifoQueueItem{
 		MessageID:        msg.ID,
 		SlackChannelID:   msg.OrderingKey,
 		ReceiveTimestamp: time.Now(),
 		Body:             string(msg.Data),
-		Ack:              ack,
-		Nack:             nack,
+		Ack:              msg.Ack,
+		Nack:             msg.Nack,
 	}
 
 	if err := trySend(ctx, item, c.receiveSinkCh); err != nil {
+		msg.Nack()
+
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			c.logger.Errorf("Failed to send pub/sub message %s to sink channel: %v", msg.ID, err)
 		}
+
+		return
 	}
 
-	c.logger.WithField("message_id", msg.ID).Debug("Pub/Sub message received")
+	c.logger.WithField("message_id", msg.ID).Debug("Pub/Sub message sent to sink channel")
 }
 
 func trySend(ctx context.Context, msg *common.FifoQueueItem, sinkCh chan<- *common.FifoQueueItem) error {
