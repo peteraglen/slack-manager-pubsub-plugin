@@ -17,6 +17,7 @@ type Options struct {
 	subscriberMaxOutstandingMessages     int
 	subscriberMaxOutstandingBytes        int
 	subscriberShutdownTimeout            time.Duration
+	pubsubClient                         pubsubClient
 }
 
 func newOptions() *Options {
@@ -132,5 +133,12 @@ func WithSubscriberMaxOutstandingBytes(n int) Option {
 func WithSubscriberShutdownTimeout(d time.Duration) Option {
 	return func(o *Options) {
 		o.subscriberShutdownTimeout = d
+	}
+}
+
+// WithPubSubClient sets a custom pubsubClient implementation for testing.
+func WithPubSubClient(client pubsubClient) Option {
+	return func(o *Options) {
+		o.pubsubClient = client
 	}
 }

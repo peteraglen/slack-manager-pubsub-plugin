@@ -20,10 +20,11 @@ var topicNameRegex = regexp.MustCompile(`^projects\/([a-z][a-z0-9-:.]{5,29})\/to
 
 // WebhookHandler handles webhook callbacks by publishing them to Pub/Sub topics.
 type WebhookHandler struct {
-	client *pubsub.Client
+	gcpClient *pubsub.Client
+	client    pubsubClient
 
 	// The publisher cache is unbounded and assumes a small, finite set of topics.
-	publishers     map[string]*pubsub.Publisher
+	publishers     map[string]pubsubPublisher
 	publishersLock sync.RWMutex
 
 	isOrdered   bool
@@ -39,8 +40,8 @@ func NewWebhookHandler(c *pubsub.Client, isOrdered bool, opts ...Option) *Webhoo
 	}
 
 	return &WebhookHandler{
-		client:     c,
-		publishers: make(map[string]*pubsub.Publisher),
+		gcpClient:  c,
+		publishers: make(map[string]pubsubPublisher),
 		isOrdered:  isOrdered,
 		opts:       options,
 	}
@@ -53,6 +54,13 @@ func (c *WebhookHandler) Init(_ context.Context) (*WebhookHandler, error) {
 
 	if err := c.opts.validatePublisher(); err != nil {
 		return nil, fmt.Errorf("invalid pub/sub publisher options: %w", err)
+	}
+
+	// Use injected client for testing, otherwise wrap the real GCP client.
+	if c.opts.pubsubClient != nil {
+		c.client = c.opts.pubsubClient
+	} else {
+		c.client = newRealPubSubClient(c.gcpClient)
 	}
 
 	c.initialized.Store(true)
@@ -119,7 +127,8 @@ func (c *WebhookHandler) HandleWebhook(ctx context.Context, topic string, data *
 	return nil
 }
 
-func (c *WebhookHandler) getPublisher(topic string) *pubsub.Publisher {
+//nolint:ireturn // Returns interface for dependency injection pattern
+func (c *WebhookHandler) getPublisher(topic string) pubsubPublisher {
 	// Fast path: read lock
 	c.publishersLock.RLock()
 	publisher, exists := c.publishers[topic]
@@ -139,10 +148,10 @@ func (c *WebhookHandler) getPublisher(topic string) *pubsub.Publisher {
 	}
 
 	publisher = c.client.Publisher(topic)
-	publisher.EnableMessageOrdering = c.isOrdered
-	publisher.PublishSettings.DelayThreshold = c.opts.publisherDelayThreshold
-	publisher.PublishSettings.CountThreshold = c.opts.publisherCountThreshold
-	publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
+	publisher.SetEnableMessageOrdering(c.isOrdered)
+	publisher.SetDelayThreshold(c.opts.publisherDelayThreshold)
+	publisher.SetCountThreshold(c.opts.publisherCountThreshold)
+	publisher.SetByteThreshold(c.opts.publisherByteThreshold)
 
 	c.publishers[topic] = publisher
 

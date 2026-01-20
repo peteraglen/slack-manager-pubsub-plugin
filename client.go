@@ -12,9 +12,10 @@ import (
 )
 
 type Client struct {
-	client        *pubsub.Client
-	publisher     *pubsub.Publisher
-	subscriber    *pubsub.Subscriber
+	gcpClient     *pubsub.Client
+	client        pubsubClient
+	publisher     pubsubPublisher
+	subscriber    pubsubSubscriber
 	topic         string
 	subscription  string
 	opts          *Options
@@ -46,7 +47,7 @@ func New(c *pubsub.Client, topic string, subscription string, logger common.Logg
 	}
 
 	return &Client{
-		client:       c,
+		gcpClient:    c,
 		topic:        topic,
 		subscription: subscription,
 		opts:         options,
@@ -67,12 +68,19 @@ func (c *Client) Init() (*Client, error) {
 		return nil, fmt.Errorf("invalid pub/sub publisher options: %w", err)
 	}
 
+	// Use injected client for testing, otherwise wrap the real GCP client.
+	if c.opts.pubsubClient != nil {
+		c.client = c.opts.pubsubClient
+	} else {
+		c.client = newRealPubSubClient(c.gcpClient)
+	}
+
 	c.publisher = c.client.Publisher(c.topic)
 
-	c.publisher.EnableMessageOrdering = true
-	c.publisher.PublishSettings.DelayThreshold = c.opts.publisherDelayThreshold
-	c.publisher.PublishSettings.CountThreshold = c.opts.publisherCountThreshold
-	c.publisher.PublishSettings.ByteThreshold = c.opts.publisherByteThreshold
+	c.publisher.SetEnableMessageOrdering(true)
+	c.publisher.SetDelayThreshold(c.opts.publisherDelayThreshold)
+	c.publisher.SetCountThreshold(c.opts.publisherCountThreshold)
+	c.publisher.SetByteThreshold(c.opts.publisherByteThreshold)
 
 	if c.subscription != "" {
 		if err := c.opts.validateSubscriber(); err != nil {
@@ -81,16 +89,16 @@ func (c *Client) Init() (*Client, error) {
 
 		c.subscriber = c.client.Subscriber(c.subscription)
 
-		c.subscriber.ReceiveSettings.MaxExtension = c.opts.subscriberMaxExtension
-		c.subscriber.ReceiveSettings.MaxDurationPerAckExtension = c.opts.subscriberMaxDurationPerAckExtension
-		c.subscriber.ReceiveSettings.MinDurationPerAckExtension = c.opts.subscriberMinDurationPerAckExtension
-		c.subscriber.ReceiveSettings.MaxOutstandingMessages = c.opts.subscriberMaxOutstandingMessages
-		c.subscriber.ReceiveSettings.MaxOutstandingBytes = c.opts.subscriberMaxOutstandingBytes
+		c.subscriber.SetMaxExtension(c.opts.subscriberMaxExtension)
+		c.subscriber.SetMaxDurationPerAckExtension(c.opts.subscriberMaxDurationPerAckExtension)
+		c.subscriber.SetMinDurationPerAckExtension(c.opts.subscriberMinDurationPerAckExtension)
+		c.subscriber.SetMaxOutstandingMessages(c.opts.subscriberMaxOutstandingMessages)
+		c.subscriber.SetMaxOutstandingBytes(c.opts.subscriberMaxOutstandingBytes)
 
-		c.subscriber.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{
+		c.subscriber.SetShutdownOptions(&pubsub.ShutdownOptions{
 			Behavior: pubsub.ShutdownBehaviorNackImmediately,
 			Timeout:  c.opts.subscriberShutdownTimeout,
-		}
+		})
 	}
 
 	c.initialized.Store(true)
